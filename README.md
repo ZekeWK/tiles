@@ -4,6 +4,7 @@ A wave function collapse implementation in rust.
 It uses generics as flags which was a design decision from curiosity.
 
 Examples:
+
 ascii:
 A map of heights with occasional houses in ascii art.
 
