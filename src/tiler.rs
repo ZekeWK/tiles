@@ -1,4 +1,4 @@
-use std::{iter::repeat, marker::PhantomData, collections::hash_map::RandomState};
+use std::{iter::repeat, marker::PhantomData};
 use bitvec::prelude::*;
 use keyed_priority_queue::KeyedPriorityQueue;
 use nohash_hasher::BuildNoHashHasher;
@@ -10,20 +10,19 @@ use custom_error::custom_error;
 pub type TileType = u8;
 
 ///Represents all ways two tiles can interact. 
-pub trait Directions : Clone + Copy {//TODO Make the id and directions better work together.
+pub trait Directions : Clone + Copy + 'static { //TODO Make the id and directions better work together.
     ///Returns a slice containing all directions in any order.
-    fn directions() -> Vec<Self>; //Until a better alternative arrives... TODO
+    const DIRECTIONS : &'static [Self];
 
-    ///Returns the directions id. These need to start at 0 and enumerate upwards, and if seen as a loop, needs to be once rotationaly symmetric if opposites are the same. TODO fix this.
+    //TODO Add better description
+    ///Returns the directions id. These need to start at 0 and enumerate upwards, and if seen as a loop, needs to be once rotationaly symmetric if opposites are the same.
     fn id(self) -> usize;
 
     ///Returns the opposite direction, such that if x is dir of y, then y is dir of x.  
     fn opposite(self) -> Self;
 
     ///Returns the number of directions.
-    fn len() -> usize;
-
-    //TODO add a move function...
+    const LEN : usize;
 }
 
 ///Represents the coordinate system in which the tiling occurs, as well as its dimensions. Each tile must be represented by a single usize, enumerated from 0.
@@ -54,15 +53,13 @@ pub trait Tiler<CS, TS, Dir> where CS : CoordinateSystem<Dir>, TS : TileSet<Dir>
     ///Finishes the tiling proccess.
     fn tile(&mut self) -> Result<(), TilingError>;
 
-    ///Tiles one.
-    fn tile_one(&mut self) -> Result<(), TilingError>;
-
+    ///Creates a vector with the tiling
     fn tiling(&self, undetermined : TileType, impossible : TileType) -> Vec<TileType>;
 }
 
 custom_error! {pub TilingError
     Failed = "This tiling attempt failed.",
-    Untileable = "There is no possible tiling for this tile set."
+    Untileable = "There is no possible tiling."
 
 }
 
@@ -80,9 +77,7 @@ pub enum CardinalDirections {
 }
 
 impl Directions for CardinalDirections {
-    fn directions() -> Vec<Self> {
-        vec![North, East, South, West]
-    }
+    const DIRECTIONS : &'static [Self] = &[North, East, South, West];
 
     fn id(self) -> usize {
         match self {
@@ -102,9 +97,7 @@ impl Directions for CardinalDirections {
         }        
     }
 
-    fn len() -> usize {
-        4
-    }
+    const LEN : usize = 4;
 }
 
 pub struct CoordinateSystemGrid<Dir> where Dir : Directions {
@@ -147,14 +140,14 @@ impl CoordinateSystem<CardinalDirections> for CoordinateSystemGrid<CardinalDirec
  
 impl <Dir> CoordinateSystemGrid<Dir> where Dir : Directions{
     pub fn new(width : usize, height : usize) -> Self {
-        Self { width: width, height: height, directions: Default::default()}
+        Self { width, height, directions: Default::default()}
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct TileSetBits<Dir> where Dir : Directions { 
-    pub rules : BitVec, //TODO make this layout more general
-    pub len : TileType,  //The amount of tiles
+    pub rules : BitVec,
+    pub len : TileType,
     pub probability_weights : Vec<Probability>,
     pub directions : PhantomData<Dir>,
 }
@@ -168,7 +161,7 @@ impl <Dir> TileSet<Dir> for TileSetBits<Dir> where Dir : Directions {
 
         let len = self.len;
         
-        self.rules[(x as usize * len as usize + y as usize) * Dir::len()/2 + dir.id() as usize] 
+        self.rules[(x as usize * len as usize + y as usize) * Dir::LEN/2 + dir.id() as usize] 
     }
 
     fn len(&self) -> TileType {
@@ -182,7 +175,7 @@ impl <Dir> TileSet<Dir> for TileSetBits<Dir> where Dir : Directions {
 
 impl <Dir> TileSetBits<Dir> where Dir : Directions {
     pub fn new(len : TileType) -> Self {
-        TileSetBits { rules: bitvec![0; len as usize * len as usize * Dir::len()/2], len : len, probability_weights : vec![1.0; len as usize], directions : Default::default()} //Double check that this works as expected.
+        TileSetBits { rules: bitvec![0; len as usize * len as usize * Dir::LEN/2], len, probability_weights : vec![1.0; len as usize], directions : Default::default()} //Double check that this works as expected.
     }
 
     pub fn set_probability_weight(&mut self, tile : TileType, weight : Probability) {
@@ -197,7 +190,7 @@ impl <Dir> TileSetBits<Dir> where Dir : Directions {
 
         let len = self.len;
         
-        self.rules.set((x as usize * len as usize + y as usize) * Dir::len()/2 + dir.id() as usize, val)
+        self.rules.set((x as usize * len as usize + y as usize) * Dir::LEN/2 + dir.id() as usize, val)
     }
 }
 
@@ -209,11 +202,11 @@ pub struct TileSetKeys<Dir> where Dir : Directions {
 
 impl <Dir> TileSet<Dir> for TileSetKeys<Dir> where Dir : Directions {
     fn allows(&self, x : TileType, y : TileType, dir : Dir) -> bool {
-        self.keys[Dir::len() * x as usize + dir.id()] == self.keys[Dir::len() * y as usize + dir.opposite().id()]
+        self.keys[Dir::LEN * x as usize + dir.id()] == self.keys[Dir::LEN * y as usize + dir.opposite().id()]
     }
 
     fn len(&self) -> TileType {
-        (self.keys.len() / Dir::len()) as u8
+        (self.keys.len() / Dir::LEN) as u8
     }
 
     fn probabilty_weight(&self, tile : TileType) -> Probability {
@@ -223,18 +216,18 @@ impl <Dir> TileSet<Dir> for TileSetKeys<Dir> where Dir : Directions {
 
 impl <Dir> TileSetKeys<Dir> where Dir : Directions {
     pub fn new(len : usize, standard_key : TileType) -> Self {
-        TileSetKeys { keys: vec![standard_key; len * Dir::len()], probability_weights: vec![1.0; len], directions: Default::default() }
+        TileSetKeys { keys: vec![standard_key; len * Dir::LEN], probability_weights: vec![1.0; len], directions: Default::default() }
     }
 
     pub fn set_key(&mut self, tile : TileType, dir : Dir, key : TileType) {
-        self.keys[Dir::len() * tile as usize + dir.id()] = key;
+        self.keys[Dir::LEN * tile as usize + dir.id()] = key;
     }
 
     /*
     pub fn set_keys(&mut self, tile : TileType, keys : Vec<TileType>) {
         assert_eq!(keys.len() as TileType, self.len());
         
-        for (dir, key) in Dir::directions().into_iter().zip(keys.into_iter()) {
+        for (dir, key) in Dir::DIRECTIONS.into_iter().zip(keys.into_iter()) {
             self.set_key(tile, dir, key);
         }
     }
@@ -248,26 +241,21 @@ impl <Dir> TileSetKeys<Dir> where Dir : Directions {
 
 pub struct TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS : CoordinateSystem<Dir>, Dir : Directions {
     pub possible_tiles : BitVec,
-    pub queue : KeyedPriorityQueue<usize, u8, RandomState>, //BuildNoHashHasher<usize>>
+    pub queue : KeyedPriorityQueue<usize, u8, BuildNoHashHasher<usize>>, // KeyedPriorityQueue<usize, u8, RandomState>, 
     pub coordinate_system : CS,
     pub tile_set : TS,
     pub directions : PhantomData<Dir>
 }
 
-///Make it have everything as generic
 impl <TS, CS, Dir> Tiler<CS, TS, Dir> for TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS : CoordinateSystem<Dir>, Dir : Directions {
     fn tile(&mut self) -> Result<(), TilingError> {
-        let mut rng = rand::prelude::thread_rng(); //Make it seedable
+        let mut rng = rand::prelude::thread_rng(); //TODO Make seedable
         let mut update_queue : Vec<usize> = Vec::new();
-        let mut update_queue_contains = bitvec![0; self.coordinate_system.len()];//TODO check this.
+        let mut update_queue_contains = bitvec![0; self.coordinate_system.len()];
         let mut probability_weights = vec![0.0 as Probability; self.tile_set.len() as usize]; 
 
         for _ in 0..self.queue.len() {
-            //println!("{:?}", self.possible_tiles);
-            
             let (pos, disallowed) = self.queue.pop().unwrap();
-            //dbg!(&pos);
-            //println!("{}", disallowed);
             
             if disallowed == self.tile_set.len() {return Err(TilingError::Failed)}
             if disallowed == self.tile_set.len() -1 {continue;}
@@ -290,10 +278,8 @@ impl <TS, CS, Dir> Tiler<CS, TS, Dir> for TilerPossibilities<CS, TS, Dir> where 
             self.possible_tile_set(pos, tile, true);
 
             
-            //Double check that it is now only one and exactly one tile for this one. 
-            
-            for dir in Dir::directions() {
-                let to_update = match (&self).coordinate_system.move_direction(pos, dir) {
+            for dir in Dir::DIRECTIONS {
+                let to_update = match (&self).coordinate_system.move_direction(pos, *dir) {
                     Some(val) => val,
                     None => continue
                 };
@@ -313,8 +299,8 @@ impl <TS, CS, Dir> Tiler<CS, TS, Dir> for TilerPossibilities<CS, TS, Dir> where 
                     _ => return Err(TilingError::Failed),
                 };
 
-                for dir in Dir::directions() {
-                    let to_update = match (&self).coordinate_system.move_direction(to_update, dir) {
+                for dir in Dir::DIRECTIONS {
+                    let to_update = match (&self).coordinate_system.move_direction(to_update, *dir) {
                         Some(val) => val,
                         None => continue
                     };
@@ -328,10 +314,6 @@ impl <TS, CS, Dir> Tiler<CS, TS, Dir> for TilerPossibilities<CS, TS, Dir> where 
         }
         
         Ok(())
-    }
-
-    fn tile_one(&mut self) -> Result<(), TilingError> {
-        todo!()
     }
 
     fn tiling(&self, undetermined : TileType, impossible : TileType) -> Vec<TileType> {
@@ -359,10 +341,10 @@ impl <TS, CS, Dir> Tiler<CS, TS, Dir> for TilerPossibilities<CS, TS, Dir> where 
 
 impl <CS, TS, Dir> TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS : CoordinateSystem<Dir>, Dir : Directions { //TODO fix this.
     pub fn new(coordinate_system : CS, tile_set : TS) -> Self {
-        let queue : KeyedPriorityQueue<usize, u8, RandomState> = KeyedPriorityQueue::from_iter((0..coordinate_system.len()).zip(repeat(0))); //Should maybe change slightly so it does not start exactly in the middle.
+        let queue : KeyedPriorityQueue<usize, u8, BuildNoHashHasher<usize>> = KeyedPriorityQueue::from_iter((0..coordinate_system.len()).zip(repeat(0))); 
         let possible_tiles = bitvec![1; coordinate_system.len() * tile_set.len() as usize];
         
-        TilerPossibilities { possible_tiles: possible_tiles, queue: queue, coordinate_system : coordinate_system, tile_set: tile_set, directions : Default::default()}
+        TilerPossibilities { possible_tiles, queue, coordinate_system, tile_set, directions : Default::default()}
     }
 
     pub fn possible_tile(&self, pos : usize, tile : TileType) -> bool {
@@ -386,7 +368,7 @@ impl <CS, TS, Dir> TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS :
         false
     }
 
-    pub fn update(&mut self, pos : usize) -> Result<bool, TilingError> { //TODO make this failable.
+    pub fn update(&mut self, pos : usize) -> Result<bool, TilingError> {
         let mut changed = false;
         let mut disallowed = 0u8;
 
@@ -394,8 +376,8 @@ impl <CS, TS, Dir> TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS :
         for tile in 0..self.tile_set.len() {
             if !self.possible_tile(pos, tile) {disallowed += 1; continue;}
         
-            for dir in Dir::directions() {
-                if self.allowed_tile(pos, tile, dir) {continue;} 
+            for dir in Dir::DIRECTIONS {
+                if self.allowed_tile(pos, tile, *dir) {continue;} 
                 self.possible_tile_set(pos, tile, false);
                 disallowed += 1;
                 changed = true;
@@ -407,7 +389,7 @@ impl <CS, TS, Dir> TilerPossibilities<CS, TS, Dir> where TS : TileSet<Dir>, CS :
 
         if disallowed == self.tile_set.len() {return Err(TilingError::Failed)}
 
-        self.queue.set_priority(&pos, disallowed).unwrap(); //Double check that it is allowed for the address to be changed...
+        self.queue.set_priority(&pos, disallowed).unwrap(); 
 
         Ok(true)
     }
